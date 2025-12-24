@@ -1,5 +1,7 @@
 # Volvo + Home Assistant (Nordpool Smart Charging Dashboard)
 
+<img width="460" height="554" alt="image" src="https://github.com/user-attachments/assets/46089f71-c415-4f81-8563-79034efde8fb" />
+
 A Home Assistant configuration repo for a **Volvo EV/PHEV charging dashboard** with **Nordpool price visualization** and a **smart “dynamic limit”** concept (plus a clean Lovelace UI built with custom cards).
 
 This project is focused on:
@@ -9,6 +11,15 @@ This project is focused on:
 - and controlling a **charger / breaker switch** from the UI.
 
 ---
+## Disclaimer - ** There will be no support provided, use at your own risk. **
+
+This is a personal project that is built around:
+- [official Volvo integration](https://www.home-assistant.io/integrations/volvo/)
+- [Custom Nordpool price sensor](https://github.com/custom-components/nordpool)
+- [Tuya integration for electricity data via breaker switch](https://www.home-assistant.io/integrations/tuya/)
+
+<img width="800" height="800" alt="image" src="https://github.com/user-attachments/assets/8288b64b-cf45-4a70-8646-5423bb7033df" />
+
 
 ## What’s inside
 
@@ -42,7 +53,7 @@ You will need entities similar to:
 - Charger control:
   - `switch.*` (your breaker/charger relay)
 
-Inputs used by the UI logic typically include:
+Inputs used by the UI logic include:
 - `input_select.ev_charge_mode`
 - `input_datetime.ev_ready_by`
 - `input_number.ev_limit_override_value`
@@ -56,8 +67,6 @@ This dashboard commonly uses:
 - `mushroom-number-card` (optional)
 - `mini-graph-card` (optional)
 - `card-mod` (optional but nice)
-
-Install via HACS, then add to Lovelace resources if needed.
 
 ---
 
@@ -95,62 +104,10 @@ Some Nordpool setups return repeated time entries (often due to how raw attribut
 Mitigation pattern:
 - dedupe by `start|end` key before selecting / rendering.
 
-### Using `this` in templates
-`this` works **inside template entities**, but not when you paste the same template into **Developer Tools → Template**.
-For dev tools testing, replace:
-- `this.attributes.x` with a direct `state_attr('sensor.your_sensor', 'x')`
+### Handling Nordpool updates
+Nordpool updates its tomorrow prices around 14.00 , to handle charge scenarios - a price from today's midnight to 7AM are used as placeholder value for tomorrow night prices until new prices are received.
 
----
+### 95-100% SoC
+My car takes full 35 minutes to charge and balance the cells, this is hardcoded into the charge logic.
 
-## Troubleshooting
 
-- **Chart empty**
-  - Check the `prices` attribute exists and is valid JSON-like output (list of `[ms, value]` pairs).
-  - Confirm timestamps are in **milliseconds** for ApexCharts.
-
-- **UI freezes / becomes unresponsive**
-  - Reduce points (use `group_by` 1h)
-  - Avoid heavy JS in `data_generator`
-  - Avoid multiple charts with long spans on the same view
-
-- **Limit shows Max (999)**
-  - If you use `999` as a sentinel, you can hide it in-chart using a transform:
-    - `return x >= 999 ? null : x;`
-  - Keep the header showing “Max” separately if you want.
-
----
-
-## Customization ideas
-
-- Add a “charging window” overlay (cheap hours) **only if** it stays performant.
-- Add a second chart series for “selected charging hours” (binary 0/1) to visualize the clock.
-- Add per-day min/avg/max stats to the header for quick decisions.
-
----
-
-## Security / privacy
-
-If you store this repo publicly:
-- avoid committing tokens, credentials, VINs, or private endpoints
-- prefer using `secrets.yaml` for sensitive values
-
----
-
-## License
-
-Choose one:
-- MIT (simple, permissive)
-- Apache-2.0 (explicit patent grant)
-- “All rights reserved” (if you don’t want reuse)
-
----
-
-## Screenshots
-
-> Add screenshots/GIFs here once you’re happy with the final dashboard layout.
-
----
-
-## Credits
-
-Built with Home Assistant + HACS custom cards and Nordpool pricing data.
