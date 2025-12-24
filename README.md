@@ -1,8 +1,10 @@
 # Volvo + Home Assistant (Nordpool Smart Charging Dashboard)
 
+A Home Assistant configuration repo for a **Volvo EV/PHEV charging dashboard** with **Nordpool price visualization** and a **smart “dynamic limit”** concept (plus a clean Lovelace UI built with custom cards).
+
 <img width="460" height="554" alt="image" src="https://github.com/user-attachments/assets/46089f71-c415-4f81-8563-79034efde8fb" />
 
-A Home Assistant configuration repo for a **Volvo EV/PHEV charging dashboard** with **Nordpool price visualization** and a **smart “dynamic limit”** concept (plus a clean Lovelace UI built with custom cards).
+
 
 This project is focused on:
 - displaying **electricity prices** (Nordpool),
