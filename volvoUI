@@ -1,0 +1,526 @@
+type: vertical-stack
+cards:
+  - type: custom:stack-in-card
+    mode: vertical
+    keep:
+      background: true
+      box_shadow: false
+      margin: false
+      outer_padding: true
+      border_radius: true
+    cards:
+      - type: custom:layout-card
+        layout_type: custom:grid-layout
+        layout:
+          grid-template-columns: 1.2fr 1fr 1.5fr
+          grid-column-gap: 0px
+          grid-row-gap: 0px
+          align-items: stretch
+        cards:
+          - type: custom:button-card
+            entity: sensor.nordpool_enefit
+            icon: mdi:currency-eur
+            tap_action:
+              action: more-info
+            show_name: false
+            show_state: false
+            show_label: true
+            layout: icon_label
+            styles:
+              card:
+                - height: 60px
+                - background: none
+                - background-color: transparent
+                - border: none
+                - box-shadow: none
+                - border-radius: 10px
+                - margin: 0px
+                - padding: 0px
+              icon:
+                - color: rgb(255, 152, 0)
+                - width: 24px
+              label:
+                - font-size: 11px
+                - justify-self: start
+                - padding-left: 5px
+                - line-height: 1.2em
+            label: |
+              [[[
+                var current = (entity.attributes.current_price * 100).toFixed(1);
+                var limit = parseFloat(states['sensor.ev_smart_charging_limit'].state).toFixed(1);
+                var limit_txt = (limit > 500) ? "Max" : limit + "c";
+                return `<span style="font-weight:900; font-size:13px">${current}c</span><br><span style="opacity:0.7">Limit ${limit_txt}</span>`;
+              ]]]
+          - type: custom:button-card
+            entity: input_datetime.ev_ready_by
+            icon: mdi:clock-check-outline
+            tap_action:
+              action: more-info
+            show_name: false
+            show_state: false
+            show_label: true
+            layout: icon_label
+            styles:
+              card:
+                - height: 60px
+                - background: none
+                - background-color: transparent
+                - border: none
+                - box-shadow: none
+                - border-radius: 10px
+                - margin: 0px
+                - padding: 0px
+              icon:
+                - color: "#2196F3"
+                - width: 24px
+              label:
+                - font-size: 11px
+                - justify-self: start
+                - padding-left: 5px
+                - line-height: 1.2em
+            label: |
+              [[[
+                var ready_time = entity.state.substring(0,5);
+                var soc = parseFloat(states['sensor.volvo_xc60_battery'].state);
+                var hours = (soc >= 95) ? ((100-soc)/5)*(35/60) : (16.8*((95-soc)/100)/3.15 + 35/60);
+                var total_min = Math.ceil(hours * 60);
+                return `<span style="font-weight:900; font-size:13px">${Math.floor(total_min/60)}h ${total_min%60}m</span><br><span style="opacity:0.7">By ${ready_time}</span>`;
+              ]]]
+          - type: custom:button-card
+            entity: sensor.volvo_xc60_battery
+            icon: mdi:car-connected
+            tap_action:
+              action: more-info
+            show_name: false
+            show_state: false
+            show_label: true
+            layout: icon_label
+            styles:
+              card:
+                - height: 60px
+                - background: none
+                - background-color: transparent
+                - border: none
+                - box-shadow: none
+                - border-radius: 10px
+                - margin: 0px
+                - padding: 0px
+              icon:
+                - width: 24px
+                - color: |
+                    [[[ 
+                      var s = entity.attributes.ui_status;
+                      if (s === 'Charging') return 'green';
+                      if (s === 'Waiting') return 'orange';
+                      return 'grey'; 
+                    ]]]
+              label:
+                - font-size: 11px
+                - justify-self: start
+                - padding-left: 5px
+                - line-height: 1.2em
+            label: |
+              [[[
+                var status = entity.attributes.ui_status || "Idle";
+                var mode = states['input_select.ev_charge_mode'].state.split(' ')[0];
+                var soc = parseFloat(states['sensor.volvo_xc60_battery'].state);
+                var socTxt = isNaN(soc) ? "—" : soc.toFixed(0) + "%";
+                return `<span style="font-weight:900; font-size:13px">${status} • ${socTxt}</span><br><span style="opacity:0.7">${mode}</span>`;
+              ]]]
+      - type: custom:button-card
+        entity: sensor.ev_smart_charging_limit
+        show_icon: false
+        show_name: false
+        show_label: true
+        styles:
+          card:
+            - background: none
+            - border: none
+            - box-shadow: none
+            - padding: 4px 16px 12px 16px
+            - text-align: left
+          label:
+            - font-size: 13px
+            - opacity: 0.9
+            - line-height: 1.5em
+            - white-space: normal
+        label: |
+          [[[
+             var sched = entity.attributes.schedule_text;
+             var reason = entity.attributes.ui_reason;
+
+             if (!reason || reason === "..." || reason === "Calculating...") {
+                var tomorrow_raw = states['sensor.nordpool_enefit'].attributes.raw_tomorrow || [];
+                if (tomorrow_raw.length === 0) reason = "⏳ Waiting for tomorrow's prices (~14:00)";
+                else reason = "Syncing system data...";
+             }
+
+             var showClock = (sched && sched !== "None" && !sched.includes("pending") && !sched.includes("ASAP"));
+             var clockHtml = showClock ? `<div>🕒 <b>Clock:</b> <span style="color: var(--primary-color);">${sched}</span></div>` : "";
+
+             return `<div style="display:flex;flex-direction:column;gap:2px;">
+                      ${clockHtml}
+                      <div>ℹ️ <b>Status:</b> ${reason}</div>
+                    </div>`;
+          ]]]
+      - type: horizontal-stack
+        cards:
+          - type: custom:button-card
+            entity: input_select.ev_charge_mode
+            name: Auto
+            icon: mdi:robot
+            tap_action:
+              action: call-service
+              service: input_select.select_option
+              service_data:
+                entity_id: input_select.ev_charge_mode
+                option: Auto (Smart)
+            state:
+              - value: Auto (Smart)
+                color: "#2196F3"
+                styles:
+                  card:
+                    - background-color: rgba(33, 150, 243, 0.2)
+            styles:
+              card:
+                - height: 50px
+                - border-radius: 12px
+                - margin: 4px
+          - type: custom:button-card
+            entity: input_select.ev_charge_mode
+            name: Manual
+            icon: mdi:tune-vertical
+            tap_action:
+              action: call-service
+              service: input_select.select_option
+              service_data:
+                entity_id: input_select.ev_charge_mode
+                option: Manual Limit
+            state:
+              - value: Manual Limit
+                color: purple
+                styles:
+                  card:
+                    - background-color: rgba(156, 39, 176, 0.2)
+            styles:
+              card:
+                - height: 50px
+                - border-radius: 12px
+                - margin: 4px
+          - type: custom:button-card
+            entity: input_select.ev_charge_mode
+            name: Force
+            icon: mdi:flash
+            tap_action:
+              action: call-service
+              service: input_select.select_option
+              service_data:
+                entity_id: input_select.ev_charge_mode
+                option: Force Charge
+            state:
+              - value: Force Charge
+                color: "#F44336"
+                styles:
+                  card:
+                    - background-color: rgba(244, 67, 54, 0.2)
+            styles:
+              card:
+                - height: 50px
+                - border-radius: 12px
+                - margin: 4px
+      - type: conditional
+        conditions:
+          - entity: input_select.ev_charge_mode
+            state: Manual Limit
+        card:
+          type: custom:mushroom-number-card
+          entity: input_number.ev_limit_override_value
+          display_mode: slider
+          icon_color: purple
+          layout: horizontal
+          primary_info: none
+          secondary_info: state
+          card_mod:
+            style: >
+              ha-card { background: none; border: none; box-shadow: none;
+              padding: 0 12px; margin-top: -5px; }
+  - type: custom:apexcharts-card
+    experimental:
+      color_threshold: true
+    header:
+      show: true
+      show_states: true
+      colorize_states: true
+    apex_config:
+      chart:
+        height: 190px
+        animations:
+          enabled: false
+        sparkline:
+          enabled: false
+      grid:
+        strokeDashArray: 4
+        borderColor: rgba(255, 255, 255, 0.1)
+      tooltip:
+        enabled: true
+      plotOptions:
+        bar:
+          columnWidth: 95%
+      stroke:
+        width:
+          - 0
+          - 0
+          - 0
+          - 0
+    graph_span: 36h
+    span:
+      start: day
+    now:
+      show: true
+      label: Now
+    series:
+      - entity: sensor.nordpool_combined_graph_data
+        name: Price now
+        unit: c/kWh
+        data_generator: return entity.attributes.prices;
+        type: area
+        stroke_width: 1
+        show:
+          legend_value: false
+          in_header: before_now
+          extremas: false
+        color_threshold:
+          - value: -5
+            color: green
+          - value: 10
+            color: orange
+          - value: 30
+            color: red
+      - entity: sensor.breaker_average_price_v4
+        name: Average charge price
+        unit: " c/kWh"
+        transform: return x * 100;
+        type: line
+        color: deepskyblue
+        group_by:
+          func: last
+          duration: 1h
+        show:
+          in_header: true
+          in_chart: false
+          legend_value: false
+      - entity: sensor.ev_smart_charging_limit
+        name: Dynamic Limit
+        unit: " c/kWh"
+        type: line
+        curve: stepline
+        color: "#9C27B0"
+        show:
+          in_header: true
+          in_chart: false
+        group_by:
+          func: last
+          duration: 1h
+      - entity: sensor.ev_smart_charging_limit
+        name: Dynamic limit
+        unit: " c/kWh"
+        type: line
+        curve: stepline
+        stroke_width: 2
+        color: blue
+        transform: |
+          return x >= 999 ? null : x;
+        show:
+          in_header: false
+          in_chart: true
+          legend_value: false
+        group_by:
+          func: last
+          duration: 1h
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: sensor.breaker_daily_cost_v4
+        show_name: false
+        show_state: false
+        show_label: true
+        icon: mdi:calendar-today
+        layout: icon_label
+        tap_action:
+          action: more-info
+        hold_action:
+          action: more-info
+          entity: sensor.breaker_daily_energy_v4
+        styles:
+          card:
+            - height: 50px
+            - border-radius: 12px
+            - background-color: rgba(76, 175, 80, 0.05)
+            - position: relative
+          icon:
+            - color: green
+            - width: 24px
+          label:
+            - font-size: 11px
+            - justify-self: start
+            - padding-left: 6px
+            - line-height: 1.2em
+          custom_fields:
+            period:
+              - position: absolute
+              - top: 3px
+              - right: 6px
+              - font-size: 9px
+              - font-weight: 900
+              - color: gray
+              - opacity: 0.8
+              - letter-spacing: 0.5px
+        custom_fields:
+          period: TODAY
+        label: |
+          [[[
+            const costRaw = parseFloat(states['sensor.breaker_daily_cost_v4']?.state);
+            const energyRaw = parseFloat(states['sensor.breaker_daily_energy_v4']?.state);
+
+            const cost = Number.isFinite(costRaw) ? costRaw.toFixed(2) : '—';
+            const energy = Number.isFinite(energyRaw) ? energyRaw.toFixed(2) : '—';
+
+            const cu = states['sensor.breaker_daily_cost_v4']?.attributes?.unit_of_measurement ?? '€';
+            const eu = states['sensor.breaker_daily_energy_v4']?.attributes?.unit_of_measurement ?? 'kWh';
+
+            return `<span style="font-weight:900; font-size:13px;">${cost} ${cu}</span><br>
+                    <span style="opacity:.75;">${energy} ${eu}</span>`;
+          ]]]
+      - type: custom:button-card
+        entity: sensor.breaker_monthly_cost_v4
+        show_name: false
+        show_state: false
+        show_label: true
+        icon: mdi:calendar-month
+        layout: icon_label
+        tap_action:
+          action: more-info
+        hold_action:
+          action: more-info
+          entity: sensor.breaker_monthly_energy_v4
+        styles:
+          card:
+            - height: 50px
+            - border-radius: 12px
+            - background-color: rgba(33, 150, 243, 0.05)
+            - position: relative
+          icon:
+            - color: blue
+            - width: 24px
+          label:
+            - font-size: 11px
+            - justify-self: start
+            - padding-left: 6px
+            - line-height: 1.2em
+          custom_fields:
+            period:
+              - position: absolute
+              - top: 3px
+              - right: 6px
+              - font-size: 9px
+              - font-weight: 900
+              - color: gray
+              - opacity: 0.8
+              - letter-spacing: 0.5px
+        custom_fields:
+          period: MONTH
+        label: |
+          [[[
+            const costRaw = parseFloat(states['sensor.breaker_monthly_cost_v4']?.state);
+            const energyRaw = parseFloat(states['sensor.breaker_monthly_energy_v4']?.state);
+
+            const cost = Number.isFinite(costRaw) ? costRaw.toFixed(2) : '—';
+            const energy = Number.isFinite(energyRaw) ? energyRaw.toFixed(2) : '—';
+
+            const cu = states['sensor.breaker_monthly_cost_v4']?.attributes?.unit_of_measurement ?? '€';
+            const eu = states['sensor.breaker_monthly_energy_v4']?.attributes?.unit_of_measurement ?? 'kWh';
+
+            return `<span style="font-weight:900; font-size:13px;">${cost} ${cu}</span><br>
+                    <span style="opacity:.75;">${energy} ${eu}</span>`;
+          ]]]
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: sensor.volvo_xc60_charging_connection_status
+        show_name: false
+        icon: mdi:ev-plug-ccs2
+        styles:
+          card:
+            - height: 50px
+            - border-radius: 12px
+            - background-color: |
+                [[[ 
+                  var s = states['sensor.volvo_xc60_charging_connection_status'].state.toLowerCase();
+                  return (s == 'connected' || s == 'unavailable')
+                    ? 'rgba(76, 175, 80, 0.06)'
+                    : 'var(--card-background-color)'; 
+                ]]]
+          icon:
+            - color: |
+                [[[ 
+                  var s = states['sensor.volvo_xc60_charging_connection_status'].state.toLowerCase();
+                  return (s == 'connected' || s == 'unavailable')
+                    ? 'green'
+                    : 'var(--secondary-text-color)'; 
+                ]]]
+        tap_action:
+          action: more-info
+      - type: custom:button-card
+        entity: sensor.volvo_xc60_charging_status
+        show_name: false
+        icon: mdi:ev-station
+        styles:
+          card:
+            - height: 50px
+            - border-radius: 12px
+            - background-color: |
+                [[[ 
+                  var s = entity.state.toLowerCase();
+                  if (s == 'charging') return 'rgba(33, 150, 243, 0.06)';
+                  if (s == 'done' || s == 'fully charged') return 'rgba(158, 158, 158, 0.05)';
+                  if (s == 'scheduled' || s == 'idle') return 'rgba(230, 199, 106, 0.06)';
+                  if (s == 'error' || s == 'fault') return 'rgba(244, 67, 54, 0.06)';
+                  return 'var(--card-background-color)';
+                ]]]
+          icon:
+            - color: |
+                [[[ 
+                  var s = entity.state.toLowerCase();
+                  if (s == 'charging') return '#2196F3';
+                  if (s == 'done') return '#4CAF50';
+                  if (s == 'scheduled' || s == 'idle') return '#FFC107';
+                  if (s == 'error' || s == 'fault') return '#F44336';
+                  return 'var(--secondary-text-color)'; 
+                ]]]
+        tap_action:
+          action: more-info
+      - type: custom:button-card
+        entity: switch.breaker_switch
+        show_name: false
+        icon: mdi:power
+        double_tap_action:
+          action: more-info
+        styles:
+          card:
+            - height: 50px
+            - border-radius: 12px
+            - background-color: |
+                [[[
+                  return entity.state === 'on'
+                    ? 'rgba(76, 175, 80, 0.06)'
+                    : 'rgba(244, 67, 54, 0.05)';
+                ]]]
+          icon:
+            - color: |
+                [[[
+                  return entity.state === 'on'
+                    ? 'rgb(76, 175, 80)'
+                    : 'rgb(244, 67, 54)';
+                ]]]
+        tap_action:
+          action: more-info
