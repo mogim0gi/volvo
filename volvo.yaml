@@ -1,16 +1,12 @@
 ###############################################################################
-# PACKAGE: EV Charge Controller - XC60 V6.1 (THE UNIFIED BRAIN)
-# logic: Unified Charging Mode (Auto, Manual Limit, Force)
+# PACKAGE: EV Charge Controller - XC60 V7.3 (LITE - DIRECT NORDPOOL)
 ###############################################################################
 
 # --- 1. INPUTS ---
 input_select:
   ev_charge_mode:
     name: Charging Mode
-    options:
-      - "Auto (Smart)"
-      - "Manual Limit"
-      - "Force Charge"
+    options: ["Auto (Smart)", "Manual Limit", "Force Charge"]
     initial: "Auto (Smart)"
     icon: mdi:car-electric
 
@@ -23,6 +19,18 @@ input_number:
     unit_of_measurement: "c/kWh"
     initial: 10
     icon: mdi:currency-eur
+  
+  # Session Helpers
+  ev_session_start_energy:
+    name: Session Start Energy Snapshot
+    mode: box
+    min: 0
+    max: 1000000
+  ev_session_start_cost:
+    name: Session Start Cost Snapshot
+    mode: box
+    min: 0
+    max: 1000000
 
 input_datetime:
   ev_ready_by:
@@ -32,246 +40,199 @@ input_datetime:
     initial: "07:00:00"
     icon: mdi:clock-check-outline
 
+
 # --- 2. TEMPLATE SENSORS ---
 template:
   - sensor:
-      # [GRAPH DATA]
-      - name: "Nordpool Combined Graph Data"
-        unique_id: nordpool_combined_graph_data
-        state: "{{ state_attr('sensor.nordpool_enefit', 'current_price') }}"
-        attributes:
-          prices: >
-            {% set today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
-            {% set tomorrow = state_attr('sensor.nordpool_enefit', 'raw_tomorrow') or [] %}
-            {% set ns = namespace(data=[]) %}
-            {% for s in (today + tomorrow) %}
-              {% set ns.data = ns.data + [[(as_timestamp(s.start) * 1000) | int, (s.value * 100) | round(2)]] %}
-            {% endfor %}
-            {{ ns.data }}
-
-      # [POWER SUM]
-      - name: "Breaker Total Power kW v4"
-        unique_id: breaker_total_power_kw_v4
-        unit_of_measurement: "kW"
-        device_class: power
-        state: >
-          {% set pa = states('sensor.breaker_phase_a_power') | float(0) %}
-          {% set pb = states('sensor.breaker_phase_b_power') | float(0) %}
-          {% set pc = states('sensor.breaker_phase_c_power') | float(0) %}
-          {{ (pa + pb + pc) | round(3) }}
-
-      # [SUPER SENSOR: THE UNIFIED BRAIN]
+      # [THE BRAIN: V8.0 - BULLETPROOF LOGIC]
       - name: "EV Smart Charging Limit"
-        unique_id: ev_smart_charging_limit
+        unique_id: ev_smart_charging_limit_v8_0_final
         unit_of_measurement: "c/kWh"
-        state: >
-          {{ this.attributes.calculated_limit | default(0) }}
+        state: "{{ this.attributes.calculated_limit | default(0) | float(0) }}"
         attributes:
-          # --- A. CALCULATE LIMIT BASED ON MODE ---
           calculated_limit: >
             {% set mode = states('input_select.ev_charge_mode') %}
-            
-            {% if mode == 'Force Charge' %}
-              999.0
-            
-            {% elif mode == 'Manual Limit' %}
-              {{ states('input_number.ev_limit_override_value') | float(0) }}
-            
+            {% if mode == 'Force Charge' %} 999.0
+            {% elif mode == 'Manual Limit' %} {{ states('input_number.ev_limit_override_value') | float(0) }}
             {% else %}
-              {# AUTO SMART LOGIC #}
               {% set soc = states('sensor.volvo_xc60_battery') | float(0) %}
-              {% set capacity = 16.8 %}
-              {% set charger_speed = 3.15 %}
-              {% set finish_min = 35 %}
+              {% set hrs_need = ((100-soc)/5)*(35/60) if soc >= 95 else (16.8*((95-soc)/100)/3.15 + 35/60) %}
               
-              {% set hours_needed = ((100 - soc) / 5) * (finish_min / 60) if soc >= 95 else (capacity * ((95 - soc) / 100) / charger_speed) + (finish_min / 60) %}
-              {% set slots_needed = (hours_needed * 4) | round(0, 'ceil') | int %}
-
               {% set t = now() %}
-              {% set ready_str = states('input_datetime.ev_ready_by') %}
-              {% set deadline = t.replace(hour=ready_str.split(':')[0]|int, minute=ready_str.split(':')[1]|int, second=0) %}
-              {% if deadline <= t %}{% set deadline = deadline + timedelta(days=1) %}{% endif %}
+              {% set r = states('input_datetime.ev_ready_by') | default('07:00:00') %}
+              {% set dl = t.replace(hour=r.split(':')[0]|int, minute=r.split(':')[1]|int, second=0) %}
+              {% if dl <= t %}{% set dl = dl + timedelta(days=1) %}{% endif %}
               
-              {% set time_rem = (as_timestamp(deadline) - as_timestamp(t)) / 3600 %}
-              {% set prices_tmrw = state_attr('sensor.nordpool_enefit', 'raw_tomorrow') or [] %}
-              {% set is_blind = (prices_tmrw | length == 0 and deadline.day > t.day) %}
+              {% set is_tomorrow = dl.strftime('%F') > t.strftime('%F') %}
+              {% set is_blind = (state_attr('sensor.nordpool_enefit', 'raw_tomorrow')|length == 0 and is_tomorrow) %}
               
-              {% if hours_needed > time_rem %}
-                999.0
+              {% set blind_start = dl.replace(hour=0, minute=0, second=0) %}
+              {% set night_capacity = (as_timestamp(dl) - as_timestamp(blind_start)) / 3600 %}
+              {% set deficit = hrs_need - night_capacity %}
+
+              {% if hrs_need > (as_timestamp(dl)-as_timestamp(t))/3600 %} 999.0
+              {% elif is_blind and t.hour >= 22 %} 999.0
+              {% elif is_blind and deficit > 0 %}
+                 {% set deficit_slots = (deficit * 4) | round(0, 'ceil') | int %}
+                 {% set today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
+                 {% set c = namespace(l=[]) %}
+                 {% for s in today %}{% if as_datetime(s.end) > t %}{% set c.l = c.l + [s.value * 100] %}{% endif %}{% endfor %}
+                 {% set sorted_today = c.l | sort %}
+                 {% if sorted_today|length >= deficit_slots %}{{ sorted_today[deficit_slots - 1] | round(2) }}{% else %}999.0{% endif %}
               {% elif is_blind %}
-                {% set prices_today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
-                {% set ns = namespace(sum=0, count=0) %}
-                {% for s in prices_today %}
-                  {% if as_datetime(s.start).hour < 7 %}{% set ns.sum = ns.sum + s.value %}{% set ns.count = ns.count + 1 %}{% endif %}
-                {% endfor %}
-                {{ (ns.sum / ns.count * 100) | round(2) if ns.count > 0 else 4.0 }}
+                 {% set today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
+                 {% set ns = namespace(sum=0, count=0) %}
+                 {% for s in today %}{% if as_datetime(s.start).hour < 7 %}{% set ns.sum = ns.sum + s.value %}{% set ns.count = ns.count + 1 %}{% endif %}{% endfor %}
+                 {{ ((ns.sum / ns.count) * 100) | round(2) if ns.count > 0 else 4.0 }}
               {% else %}
-                {% set all_prices = (state_attr('sensor.nordpool_enefit', 'raw_today') or []) + prices_tmrw %}
-                {% set t_floor = t.replace(minute=(t.minute // 15) * 15, second=0, microsecond=0) %}
-                {% set candidates = namespace(vals=[], seen=[]) %}
-                
-                {% for s in all_prices %}
-                  {% set st = as_datetime(s.start) %}
-                  {% if st >= t_floor and st < deadline %}
-                    {% set key = s.start ~ '|' ~ s.end %}
-                    {% if key not in candidates.seen %}
-                      {% set candidates.seen = candidates.seen + [key] %}
-                      {% set candidates.vals = candidates.vals + [s.value | float(0)] %}
-                    {% endif %}
+                {% set slots = (hrs_need * 4) | round(0, 'ceil') | int %}
+                {% set all = (state_attr('sensor.nordpool_enefit', 'raw_today') or []) + (state_attr('sensor.nordpool_enefit', 'raw_tomorrow') or []) %}
+                {% set c = namespace(l=[]) %}
+                {% for s in all %}
+                  {% if as_datetime(s.end) > t and as_datetime(s.start) < dl %}
+                    {% set c.l = c.l + [s.value * 100] %}
                   {% endif %}
                 {% endfor %}
-                
-                {% set sorted = candidates.vals | sort %}
-                {% if sorted | length >= slots_needed and slots_needed > 0 %}
-                  {{ (sorted[slots_needed - 1] * 100) | round(2) }}
-                {% elif sorted | length > 0 %}
-                  {{ (sorted[-1] * 100) | round(2) }}
-                {% else %}
-                  0.0
-                {% endif %}
+                {% set sorted = c.l | sort %}
+                {{ sorted[slots-1] | round(2) if sorted|length >= slots else (sorted[-1] if sorted|length > 0 else 0) }}
               {% endif %}
             {% endif %}
 
-          # --- B. UI SCHEDULE TEXT ---
           schedule_text: >
-            {% set limit = this.attributes.calculated_limit | float(0) %}
             {% set mode = states('input_select.ev_charge_mode') %}
-            {% set t = now() %}
-        
-            {% if mode == 'Force Charge' %}
-               Always Charging (Force Mode)
+            {% if mode == 'Force Charge' %} Always Charging
             {% else %}
-               {% set ready_str = states('input_datetime.ev_ready_by') %}
-               {% set deadline = t.replace(hour=ready_str.split(':')[0]|int, minute=ready_str.split(':')[1]|int, second=0) %}
-               {% if deadline <= t %}{% set deadline = deadline + timedelta(days=1) %}{% endif %}
-        
-               {% set raw_today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
-               {% set raw_tomorrow = state_attr('sensor.nordpool_enefit', 'raw_tomorrow') or [] %}
-        
-               {# Build candidate list, but DEDUPE by start (or start+end) #}
-               {% set candidates = namespace(list=[], seen=[]) %}
-               {% for s in (raw_today + raw_tomorrow) %}
-                 {% set ss = as_datetime(s.start) %}
-                 {% if ss >= t.replace(minute=0, second=0) and ss < deadline %}
-                    {% if (s.value * 100) <= (limit + 0.01) %}
-                      {% set key = s.start ~ '|' ~ s.end %}
-                      {% if key not in candidates.seen %}
-                        {% set candidates.seen = candidates.seen + [key] %}
-                        {% set candidates.list = candidates.list + [s] %}
-                      {% endif %}
-                    {% endif %}
-                 {% endif %}
-               {% endfor %}
-          
-               {% if (raw_tomorrow|length == 0 and deadline.day > t.day) and mode == 'Auto (Smart)' and limit < 10 %}
-                  Schedule pending (~14:00)
-               {% else %}
-                  {% set selected = candidates.list | sort(attribute='start') %}
-                  {% set ns = namespace(res="", start=none, end=none) %}
-                  {% for s in selected %}
-                    {% set s_start = as_datetime(s.start) %}
-                    {% set s_end = as_datetime(s.end) %}
-                    {% if ns.start is none %}
-                      {% set ns.start = s_start %}{% set ns.end = s_end %}
-                    {% elif s_start == ns.end %}
-                      {% set ns.end = s_end %}
-                    {% else %}
-                      {% set ns.res = ns.res + ns.start.strftime('%H:%M') + "-" + ns.end.strftime('%H:%M') + ", " %}
-                      {% set ns.start = s_start %}{% set ns.end = s_end %}
-                    {% endif %}
-                  {% endfor %}
-                  {% if ns.start is not none %}
-                    {% set ns.res = ns.res + ns.start.strftime('%H:%M') + "-" + ns.end.strftime('%H:%M') %}
+              {% set t = now() %}
+              {% set r = states('input_datetime.ev_ready_by') | default('07:00:00') %}
+              {% set dl = t.replace(hour=r.split(':')[0]|int, minute=r.split(':')[1]|int, second=0) %}
+              {% if dl <= t %}{% set dl = dl + timedelta(days=1) %}{% endif %}
+              {% set is_tomorrow = dl.strftime('%F') > t.strftime('%F') %}
+              {% set is_blind = (state_attr('sensor.nordpool_enefit', 'raw_tomorrow')|length == 0 and is_tomorrow) %}
+              {% set soc = states('sensor.volvo_xc60_battery') | float(0) %}
+              {% set hrs_need = ((100-soc)/5)*(35/60) if soc >= 95 else (16.8*((95-soc)/100)/3.15 + 35/60) %}
+              {% set blind_start = dl.replace(hour=0, minute=0, second=0) %}
+              {% set night_capacity = (as_timestamp(dl) - as_timestamp(blind_start)) / 3600 %}
+              {% set deficit = hrs_need - night_capacity %}
+              {% set lim = this.attributes.calculated_limit | default(0) | float %}
+              
+              {% if is_blind and t.hour >= 22 %}
+                 ⚠️ DATA OFFLINE: Force Charging
+              {% elif is_blind and mode == 'Auto (Smart)' and deficit > 0 %}
+                 {% set today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
+                 {% set c = namespace(l=[]) %}
+                 {% for s in today %}
+                   {% if as_datetime(s.end) > t and (s.value * 100) <= lim + 0.01 %}
+                     {% set c.l = c.l + [s] %}
+                   {% endif %}
+                 {% endfor %}
+                 {% set sel = c.l | sort(attribute='start') %}
+                 {% set ns = namespace(res="", s=none, e=none) %}
+                 {% for s in sel %}{% set ss = as_datetime(s.start) %}{% set se = as_datetime(s.end) %}{% if ns.s is none %}{% set ns.s = ss %}{% set ns.e = se %}{% elif ss == ns.e %}{% set ns.e = se %}{% else %}{% set ns.res = ns.res + ns.s.strftime('%H:%M') + "-" + ns.e.strftime('%H:%M') + ", " %}{% set ns.s = ss %}{% set ns.e = se %}{% endif %}{% endfor %}{% if ns.s is not none %}{% set ns.res = ns.res + ns.s.strftime('%H:%M') + "-" + ns.e.strftime('%H:%M') %}{% endif %}
+                 {{ ns.res }} + 00:00-{{ r[:5] }} (Est)
+              {% elif is_blind and mode == 'Auto (Smart)' %}
+                 00:00-{{ r[:5] }} (Est @ {{ lim }}c)
+              {% else %}
+                {% set raw = (state_attr('sensor.nordpool_enefit', 'raw_today') or []) + (state_attr('sensor.nordpool_enefit', 'raw_tomorrow') or []) %}
+                {% set c = namespace(l=[]) %}
+                {% for s in raw %}
+                  {% if as_datetime(s.end) > t and as_datetime(s.start) < dl and (s.value * 100) <= lim+0.01 %}
+                    {% set c.l = c.l + [s] %}
                   {% endif %}
-                  {{ ns.res if ns.res != "" else "None" }}
-               {% endif %}
+                {% endfor %}
+                {% set sel = c.l | sort(attribute='start') %}
+                {% set ns = namespace(res="", s=none, e=none) %}
+                {% for s in sel %}{% set ss = as_datetime(s.start) %}{% set se = as_datetime(s.end) %}{% if ns.s is none %}{% set ns.s = ss %}{% set ns.e = se %}{% elif ss == ns.e %}{% set ns.e = se %}{% else %}{% set ns.res = ns.res + ns.s.strftime('%H:%M') + "-" + ns.e.strftime('%H:%M') + ", " %}{% set ns.s = ss %}{% set ns.e = se %}{% endif %}{% endfor %}{% if ns.s is not none %}{% set ns.res = ns.res + ns.s.strftime('%H:%M') + "-" + ns.e.strftime('%H:%M') %}{% endif %}
+                {{ ns.res if ns.res != "" else "None" }}
+              {% endif %}
             {% endif %}
 
-          # --- C. UI STATUS INFO ---
           ui_status: >
              {% set mode = states('input_select.ev_charge_mode') %}
              {% if mode == 'Force Charge' %}Charging
              {% elif states('sensor.volvo_xc60_battery')|float >= 100 %}Idle
              {% elif is_state('switch.breaker_switch','on') %}Charging
-             {% elif 'pending' in this.attributes.schedule_text %}Waiting
+             {% elif 'Est' in (this.attributes.schedule_text | default('')) %}Predicting
+             {% elif 'Gap' in (this.attributes.schedule_text | default('')) %}Gap Filling
+             {% elif 'pending' in (this.attributes.schedule_text | default('pending')) %}Waiting
              {% else %}Paused{% endif %}
-          
+
           ui_reason: >
              {% set mode = states('input_select.ev_charge_mode') %}
              {% set soc = states('sensor.volvo_xc60_battery') | float(0) %}
-             {% if mode == 'Force Charge' %}⚠️ Force Charge Active
-             {% elif soc >= 100 %}✅ Battery is full
-             {% elif mode == 'Manual Limit' %}🔒 Manual Limit ({{ states('input_number.ev_limit_override_value') }}c) Active
-             {% elif is_state('switch.breaker_switch','on') %}⚡ Charging (Price is good)
-             {% elif 'pending' in this.attributes.schedule_text %}⏳ Waiting for prices (~14:00)
-             {% else %}💤 Waiting for cheaper slots{% endif %}
+             {% set sched = this.attributes.schedule_text | default('pending') %}
+             {% if mode == 'Force Charge' %} ⚠️ Force Charge Active
+             {% elif soc >= 100 %} ✅ Battery is full
+             {% elif mode == 'Manual Limit' %} 🔒 Manual Limit ({{ states('input_number.ev_limit_override_value') }}c) Active
+             {% elif is_state('switch.breaker_switch','on') %} ⚡ Charging (Price is good)
+             {% elif 'DATA OFFLINE' in sched %} 🆘 API Failure: Safety Charge
+             {% elif 'Gap' in sched %} 📉 Filling gap with cheapest slots
+             {% elif 'Est' in sched %} 🔮 Prediction: Tomorrow morning is cheap
+             {% elif sched == 'pending' %} ⏳ Waiting for tomorrow's prices (~14:00)
+             {% else %} 💤 Waiting for cheaper slots {% endif %}
 
-      # [COST RATE]
+      # [MISSING SENSOR RESTORED: Total Power in kW]
+      - name: "Breaker Total Power kW v4"
+        unique_id: breaker_total_power_kw_v4_unified
+        unit_of_measurement: "kW"
+        device_class: power
+        state: >
+          {% set p = states('sensor.breaker_phase_a_power')|float(0) + states('sensor.breaker_phase_b_power')|float(0) + states('sensor.breaker_phase_c_power')|float(0) %}
+          {{ (p / 1000) | round(3) }}
+
       - name: "Breaker Cost Rate v4"
-        unique_id: breaker_cost_rate_v4
+        unique_id: breaker_cost_rate_v4_unified
         unit_of_measurement: "EUR/h"
-        device_class: monetary
         state: >
-          {% set total_power_kW = states('sensor.breaker_total_power_kw_v4') | float(0) %}
-          {% set t = now() %}
-          {% set ns = namespace(price=states('sensor.nordpool_enefit') | float(0)) %}
-          {% set today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
-          {% for s in today %}
-            {% if as_datetime(s.start) <= t < as_datetime(s.end) %}
-              {% set ns.price = s.value | float(0) %}
-            {% endif %}
-          {% endfor %}
-          {{ (total_power_kW * ns.price) | round(3) }}
+          {% set p = states('sensor.breaker_total_power_kw_v4')|float(0) %}
+          {% set price_cents = state_attr('sensor.nordpool_enefit', 'current_price') | float(0) * 100 %}
+          {{ (p * price_cents / 100) | round(3) }}
 
-      # [AVG PRICE]
+# [FIX 4: Average Price Calculation]
       - name: "Breaker Average Price v4"
-        unique_id: breaker_avg_price_lifetime_v4
-        unit_of_measurement: "EUR/kWh"
+        unique_id: breaker_average_price_v4_unified
+        unit_of_measurement: "c/kWh"
         state: >
-          {% set cost = states('sensor.breaker_total_cost_v4') | float(0) %}
-          {% set energy = states('sensor.breaker_total_energy_v4') | float(0) %}
-          {{ (cost / energy) | round(3) if energy > 0 else 0 }}
+          {% set c = states('sensor.breaker_total_cost_v4') | float(0) %}
+          {% set e = states('sensor.breaker_total_energy_v4') | float(0) %}
+          {{ ((c / e) * 100) | round(2) if e > 0 else 0 }}
 
 # --- 3. INTEGRATION SENSORS ---
 sensor:
   - platform: integration
+    unique_id: breaker_total_energy_v4_integrated
     source: sensor.breaker_total_power_kw_v4
     name: "Breaker Total Energy v4"
-    unique_id: breaker_total_energy_integration_v4
     method: left
-    round: 3
     unit_time: h
+    round: 3  # [FIX 2: Add this]
   - platform: integration
+    unique_id: breaker_total_cost_v4_integrated
     source: sensor.breaker_cost_rate_v4
     name: "Breaker Total Cost v4"
-    unique_id: breaker_total_cost_integration_v4
     method: left
-    round: 3
     unit_time: h
+    round: 3  # [FIX 3: Add this]
 
 # --- 4. UTILITY METERS ---
 utility_meter:
   breaker_daily_energy_v4:
     source: sensor.breaker_total_energy_v4
-    unique_id: breaker_daily_energy_v4
+    cycle: daily
+  breaker_daily_cost_v4:
+    source: sensor.breaker_total_cost_v4
     cycle: daily
   breaker_monthly_energy_v4:
     source: sensor.breaker_total_energy_v4
-    unique_id: breaker_monthly_energy_v4
     cycle: monthly
-  breaker_daily_cost_v4:
-    source: sensor.breaker_total_cost_v4
-    unique_id: breaker_daily_cost_v4
-    cycle: daily
   breaker_monthly_cost_v4:
     source: sensor.breaker_total_cost_v4
-    unique_id: breaker_monthly_cost_v4
     cycle: monthly
 
-# --- 5. AUTOMATION (UNIFIED TRIGGER) ---
+# --- 5. AUTOMATIONS ---
 automation:
-  - alias: EV – Charge Controller (XC60 V6.1)
-    id: ev_charge_controller_xc60_v6_1
+  # 1. MAIN CHARGE CONTROLLER (Simplified)
+  - alias: "EV – Charge Controller (XC60 V7.3)"
+    id: ev_charge_controller_xc60_v7_3
     mode: restart
     trigger:
       - platform: time_pattern
@@ -281,35 +242,114 @@ automation:
           - sensor.volvo_xc60_battery
           - sensor.ev_smart_charging_limit
           - input_select.ev_charge_mode
-          - input_datetime.ev_ready_by
-          - input_number.ev_limit_override_value
+          - sensor.nordpool_enefit
     action:
       - variables:
           soc: "{{ states('sensor.volvo_xc60_battery') | float(0) }}"
           limit: "{{ states('sensor.ev_smart_charging_limit') | float(0) }}"
-          current_price: >
-            {% set t = now() %}
-            {% set ns = namespace(val=999) %}
-            {% set today = state_attr('sensor.nordpool_enefit', 'raw_today') or [] %}
-            {% for s in today %}
-              {% if as_datetime(s.start) <= t < as_datetime(s.end) %}
-                {% set ns.val = (s.value * 100) | round(2) %}
-              {% endif %}
-            {% endfor %}
-            {{ ns.val }}
-            
+          # FIX: Direct read. We trust the sensor now (with *100 fix for EUR)
+          current_price: "{{ state_attr('sensor.nordpool_enefit', 'current_price') | float(0) * 100 }}"
       - choose:
-          # A. Charge if price is below current effective limit
-          - conditions: 
-              - "{{ soc < 100 }}"
-              - "{{ current_price <= limit }}"
-              - "{{ limit > 0 }}"
-            sequence:
-              - service: switch.turn_on
-                target: { entity_id: switch.breaker_switch }
+          - conditions: ["{{ soc < 100 }}", "{{ current_price <= limit + 0.01 }}", "{{ limit > 0 }}"]
+            sequence: [{ service: switch.turn_on, target: { entity_id: switch.breaker_switch } }]
+          - conditions: []
+            sequence: [{ service: switch.turn_off, target: { entity_id: switch.breaker_switch } }]
 
-          # B. Otherwise Turn Off
+  # 2. NOTIFY ON PLUGGED IN (Same as before)
+  - alias: "EV – Notify on Plugged In"
+    id: ev_notify_plugged_in
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: sensor.volvo_xc60_charging_connection_status
+        to: "Connected"
+    action:
+      - service: homeassistant.update_entity
+        target: { entity_id: device_tracker.volvo_xc60_location }
+      - wait_template: "{{ is_state('device_tracker.volvo_xc60_location', 'home') }}"
+        timeout: "00:15:00"
+        continue_on_timeout: true
+      - choose:
+          - conditions: [{ condition: state, entity_id: device_tracker.volvo_xc60_location, state: "home" }]
+            sequence:
+              - service: input_number.set_value
+                target: { entity_id: input_number.ev_session_start_energy }
+                data: { value: "{{ states('sensor.breaker_total_energy_v4') | float(0) }}" }
+              - service: input_number.set_value
+                target: { entity_id: input_number.ev_session_start_cost }
+                data: { value: "{{ states('sensor.breaker_total_cost_v4') | float(0) }}" }
+              - service: notify.mobile_app_g
+                data:
+                  title: "🏠 Plugged in at Home"
+                  message: "Plan: {{ states('sensor.ev_smart_charging_limit') }}c. \n{{ state_attr('sensor.ev_smart_charging_limit', 'schedule_text') }}"
+                  data: { tag: "volvo_charge_alert", actions: [{ action: "FORCE_CHARGE", title: "🚀 Force" }, { action: "SMART_AUTO", title: "🤖 Auto" }] }
           - conditions: []
             sequence:
-              - service: switch.turn_off
-                target: { entity_id: switch.breaker_switch }
+              - service: notify.mobile_app_g
+                data: { title: "🌍 Charging External", message: "Volvo plugged in away from home." }
+
+  # 3. NOTIFY ACTIONS (Same as before)
+  - alias: "EV – Handle Notification Actions"
+    id: ev_handle_notification_actions
+    mode: parallel
+    trigger:
+      - platform: event
+        event_type: mobile_app_notification_action
+    action:
+      - choose:
+          - conditions: "{{ wait.trigger.event.data.action == 'FORCE_CHARGE' }}"
+            sequence:
+              - service: input_select.select_option
+                target: { entity_id: input_select.ev_charge_mode }
+                data: { option: "Force Charge" }
+              - service: notify.mobile_app_g
+                data: { message: "Force Charge Active", data: { tag: "volvo_charge_alert" } }
+          - conditions: "{{ wait.trigger.event.data.action == 'SMART_AUTO' }}"
+            sequence:
+              - service: input_select.select_option
+                target: { entity_id: input_select.ev_charge_mode }
+                data: { option: "Auto (Smart)" }
+              - service: notify.mobile_app_g
+                data: { message: "Auto Smart Active", data: { tag: "volvo_charge_alert" } }
+
+  # 4. NOTIFY FULLY CHARGED (With DND Fix)
+  - alias: "EV – Notify Fully Charged"
+    id: ev_notify_fully_charged
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.volvo_xc60_battery
+        above: 99
+    action:
+      - choose:
+          - conditions: [{ condition: state, entity_id: device_tracker.volvo_xc60_location, state: "home" }]
+            sequence:
+              - service: notify.mobile_app_g
+                data:
+                  title: "✅ Charging Complete"
+                  message: >
+                    Full (Home).
+                    ⚡ {{ (states('sensor.breaker_total_energy_v4')|float - states('input_number.ev_session_start_energy')|float)|round(2) }} kWh
+                    💶 {{ (states('sensor.breaker_total_cost_v4')|float - states('input_number.ev_session_start_cost')|float)|round(2) }}€
+                  data: { push: { sound: { name: default, critical: 1, volume: 1.0 } }, importance: high, priority: high }
+          - conditions: []
+            sequence:
+              - service: notify.mobile_app_g
+                data: { title: "✅ Charging Complete", message: "Volvo is fully charged (External)." }
+
+  # 5. SMART RESET (Same as before)
+  - alias: "EV – Smart Reset on Departure"
+    id: ev_smart_reset_on_departure
+    mode: restart
+    trigger:
+      - platform: state
+        entity_id: sensor.volvo_xc60_charging_connection_status
+        from: "Connected"
+        for: { minutes: 5 }
+    action:
+      - service: input_datetime.set_datetime
+        target: { entity_id: input_datetime.ev_ready_by }
+        data: { time: "07:00:00" }
+      - service: input_select.select_option
+        target: { entity_id: input_select.ev_charge_mode }
+        data: { option: "Auto (Smart)" }
